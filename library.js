@@ -9,7 +9,7 @@ var	async = require('async'),
 	Groups = module.parent.require('./groups'),
 	Notifications = module.parent.require('./notifications'),
 	Utils = module.parent.require('../public/src/utils'),
-
+	db = module.parent.require('./database'),
 	SocketPlugins = module.parent.require('./socket.io/plugins'),
 
 	regex = XRegExp('(@[\\p{L}\\d\\-_.]+)', 'g'),
@@ -84,6 +84,26 @@ Mentions.notify = function(postData) {
 				return array.indexOf(uid) === index && parseInt(uid, 10) !== parseInt(postData.uid, 10);
 			});
 
+			// Check if user who mention is ignored by mentioned user
+			// Compatible with EXODO IGNORE USERS plugin
+			
+			var filteredUids = [];
+			async.each(uids, function(u, cb){
+					db.isSetMember('ignored:' + u, postData.uid, function(err, isIgnored){
+						if(!isIgnored)
+						{
+							filteredUids.push(u);
+						}
+			 			cb();
+					});
+			}, function(err){
+				if(err)
+			 	{		
+					filteredUids = uids;
+			 	}
+			});
+
+
 			if (uids.length > 0) {
 				Notifications.create({
 					bodyShort: '[[notifications:user_mentioned_you_in, ' + results.author + ', ' + results.topic.title + ']]',
@@ -97,7 +117,7 @@ Mentions.notify = function(postData) {
 					if (err || !notification) {
 						return;
 					}
-					Notifications.push(notification, results.uids);
+					Notifications.push(notification, filteredUids);
 				});
 			}
 		});
