@@ -1,13 +1,15 @@
 'use strict';
 
-var	async = require('async'),
-	XRegExp = require('xregexp').XRegExp,
+var	async = module.parent.require('async'),
+	XRegExp = module.parent.require('xregexp').XRegExp,
+	validator = module.parent.require('validator'),
 
 	nconf = module.parent.require('nconf'),
 	Topics = module.parent.require('./topics'),
 	User = module.parent.require('./user'),
 	Groups = module.parent.require('./groups'),
 	Notifications = module.parent.require('./notifications'),
+	Privileges = module.parent.require('./privileges'),
 	Utils = module.parent.require('../public/src/utils'),
 	db = module.parent.require('./database'),
 	SocketPlugins = module.parent.require('./socket.io/plugins'),
@@ -62,7 +64,7 @@ Mentions.notify = function(postData) {
 
 		async.parallel({
 			topic: function(next) {
-				Topics.getTopicFields(postData.tid, ['title'], next);
+				Topics.getTopicFields(postData.tid, ['title', 'cid'], next);
 			},
 			author: function(next) {
 				User.getUserField(postData.uid, 'username', next);
@@ -104,7 +106,15 @@ Mentions.notify = function(postData) {
 			});
 
 
-			if (uids.length > 0) {
+			if (!uids.length) {
+				return;
+			}
+
+			Privileges.categories.filterUids('read', results.topic.cid, uids, function(err, uids) {
+				if (err || !uids.length) {
+					return;
+				}
+
 				Notifications.create({
 					bodyShort: '[[notifications:user_mentioned_you_in, ' + results.author + ', ' + results.topic.title + ']]',
 					bodyLong: postData.content,
@@ -117,9 +127,11 @@ Mentions.notify = function(postData) {
 					if (err || !notification) {
 						return;
 					}
+
 					Notifications.push(notification, filteredUids);
+
 				});
-			}
+			});
 		});
 	});
 };
@@ -150,20 +162,30 @@ function getGroupMemberUids(groupRecipients, callback) {
 	});
 }
 
-Mentions.addMentions = function(data, callback) {
-	var relativeUrl = nconf.get('relative_path') || '';
-
+Mentions.parsePost = function(data, callback) {
 	if (!data || !data.postData || !data.postData.content) {
 		return callback(null, data);
-	} 
-	
-	var cleanedContent = Mentions.clean(data.postData.content, false, false, true);
+	}
+
+	Mentions.parseRaw(data.postData.content, function(err, content) {
+		if (err) {
+			return callback(err);
+		}
+
+		data.postData.content = content;
+		callback(null, data);
+	});
+};
+
+Mentions.parseRaw = function(content, callback) {
+	var cleanedContent = Mentions.clean(content, false, false, true);
 
 	var matches = cleanedContent.match(regex);
 
 	if (!matches) {
-		return callback(null, data);
+		return callback(null, content);
 	}
+
 	// Eliminate duplicates
 	matches = matches.filter(function(cur, idx) {
 		return idx === matches.indexOf(cur);
@@ -181,27 +203,30 @@ Mentions.addMentions = function(data, callback) {
 			if (err) {
 				return next(err);
 			}
-			
+
 			if (results.uid || results.groupExists) {
 				var regex = isLatinMention.test(match)
 					? new RegExp(match + '\\b', 'g')
 					: new RegExp(match, 'g');
-				
-				var str = results.uid 
-					? '<a class="plugin-mentions-a" href="' + relativeUrl + '/user/' + slug + '">' + match + '</a>' 
-					: '<a class="plugin-mentions-a" href="' + relativeUrl + '/groups/' + slug + '">' + match + '</a>';
-				
-				data.postData.content = data.postData.content.replace(regex, str);
+
+				var str = results.uid
+					? '<a class="plugin-mentions-a" href="' + nconf.get('url') + '/user/' + slug + '">' + match + '</a>'
+					: '<a class="plugin-mentions-a" href="' + nconf.get('url') + '/groups/' + slug + '">' + match + '</a>';
+
+				content = content.replace(regex, str);
 			}
-		
+
 			next();
 		});
 	}, function(err) {
-		callback(err, data);
+		callback(err, content);
 	});
 };
 
 Mentions.clean = function(input, isMarkdown, stripBlockquote, stripCode) {
+	if (!input) {
+		return input;
+	}
 	if (stripBlockquote) {
 		var bqMatch = isMarkdown ? /^>.*$/gm : /^<blockquote>.*<\/blockquote>/gm;
 		input = input.replace(bqMatch, '');
@@ -219,17 +244,14 @@ Mentions.clean = function(input, isMarkdown, stripBlockquote, stripCode) {
 */
 
 SocketPlugins.mentions.listGroups = function(socket, data, callback) {
-	Groups.list({
-		removeEphemeralGroups: true,
-		truncateUserList: true,
-		unescape: true
-	}, function(err, groups) {
-		if (err || !Array.isArray(groups)) {
-			return callback(null, []);
+	Groups.getGroups('groups:visible:createtime', 0, -1, function(err, groups) {
+		if (err) {
+			return callback(err);
 		}
-		callback(null, groups.map(function(groupObj) {
-			return groupObj.name;
-		}));
+		groups = groups.filter(Boolean).map(function(groupName) {
+			return validator.escape(groupName);
+		});
+		callback(null, groups);
 	});
 };
 
