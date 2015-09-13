@@ -86,24 +86,7 @@ Mentions.notify = function(postData) {
 				return array.indexOf(uid) === index && parseInt(uid, 10) !== parseInt(postData.uid, 10);
 			});
 
-			// Check if user who mention is ignored by mentioned user
-			// Compatible with EXODO IGNORE USERS plugin
 			
-			var filteredUids = [];
-			async.each(uids, function(u, cb){
-					db.isSetMember('ignored:' + u, postData.uid, function(err, isIgnored){
-						if(!isIgnored)
-						{
-							filteredUids.push(u);
-						}
-			 			cb();
-					});
-			}, function(err){
-				if(err)
-			 	{		
-					filteredUids = uids;
-			 	}
-			});
 
 
 			if (!uids.length) {
@@ -128,7 +111,7 @@ Mentions.notify = function(postData) {
 						return;
 					}
 
-					Notifications.push(notification, filteredUids);
+					Notifications.push(notification, results.uids);
 
 				});
 			});
